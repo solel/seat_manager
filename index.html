@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>스마트 자리 배치 시스템</title>
+  <style>
+    :root {
+      --primary: #4a90e2;
+      --secondary: #b3e5fc;
+      --background: #f7f9fc;
+      --text: #333;
+    }
+    body {
+      font-family: 'Pretendard', sans-serif;
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+    }
+    header {
+      background: linear-gradient(135deg, var(--primary), #357abd);
+      color: white;
+      padding: 1.5rem;
+      text-align: center;
+    }
+    nav {
+      background: white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 1rem;
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+    }
+    nav button {
+      cursor: pointer;
+      padding: 0.5rem 1rem;
+      border: none;
+      background-color: var(--primary);
+      color: white;
+      border-radius: 6px;
+      font-weight: bold;
+    }
+    main {
+      max-width: 1000px;
+      margin: 2rem auto;
+      padding: 2rem;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    .controls {
+      display: grid;
+      gap: 1rem;
+    }
+    .input-group {
+      display: flex;
+      flex-direction: column;
+    }
+    input, select, textarea {
+      padding: 0.8rem;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    .seat-layout {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2rem;
+      justify-content: center;
+      margin-top: 2rem;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .pair-row {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      width: 100%;
+    }
+    .seat {
+      width: 60px;
+      height: 60px;
+      background: var(--secondary);
+      border: 2px solid var(--primary);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .seat.excluded {
+      background: #ccc !important;
+      border-color: #999 !important;
+      cursor: not-allowed;
+      pointer-events: none;
+      color: transparent;
+    }
+    button {
+      padding: 0.8rem 1.2rem;
+      border: none;
+      background: var(--primary);
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    section { display: none; }
+    section.active { display: block; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>스마트 자리 배치 시스템</h1>
+</header>
+<nav>
+  <button onclick="switchTab('setup')">설정</button>
+  <button onclick="switchTabAndAssign('seat')">자리 배치 결과</button>
+  <!-- <button onclick="switchTab('admin')">(관리자)</button> -->
+</nav>
+<main>
+  <section id="setup" class="active">
+    <h2>기본 설정</h2>
+    <div class="controls">
+      <div class="input-group">
+        <label>총 학생 수</label>
+        <input type="number" id="studentCount" value="34">
+      </div>
+      <div class="input-group">
+        <label>배치 유형</label>
+        <select id="layoutType">
+          <option value="single">집중모드 (혼자 앉기)</option>
+          <option value="pair">2인 1조</option>
+          <option value="group">모둠</option>
+        </select>
+      </div>
+      <div class="input-group">
+        <label>행 / 열</label>
+        <input type="number" id="rows" value="6">
+        <input type="number" id="cols" value="6">
+      </div>
+      <div class="input-group" id="groupConfig">
+        <label>모둠당 최소 인원 수</label>
+        <input type="number" id="groupSize" value="4" min="2">
+      </div>
+      <button id="generateSeats">좌석 생성 (먼저 클릭 후 제외 좌석 지정)</button>
+    </div>
+  </section>
+  <section id="seat">
+    <h2>자리 배치 결과 (비활성화된 자리는 제외됨)</h2>
+    <div id="seatGrid" class="seat-layout"></div>
+    <div style="text-align:center; margin-top:1rem;">
+      <button onclick="finalizeAssignment()">자리 배치 실행</button>
+    </div>
+  </section>
+  <!-- <section id="admin">
+    <h2>관리자 설정</h2>
+    <div class="controls">
+      <div class="input-group">
+        <label>절대 함께 앉으면 안 되는 쌍 (예: 1-5,3-7)</label>
+        <textarea id="forbiddenPairs" rows="3"></textarea>
+      </div>
+    </div>
+  </section> -->
+</main>
+<script>
+  let allSeats = [];
+  let excludedIndexes = new Set();
+
+  function switchTab(id) {
+    document.querySelectorAll('section').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  function switchTabAndAssign(id) {
+    finalizeAssignment();
+    switchTab(id);
+  }
+
+  function toggleExclude(seat, index) {
+    const currentIndex = parseInt(seat.dataset.seatNumber) - 1;
+    if (seat.classList.contains('excluded')) {
+      seat.classList.remove('excluded');
+      excludedIndexes.delete(currentIndex);
+    } else {
+      seat.classList.add('excluded');
+      excludedIndexes.add(currentIndex);
+    }
+  }
+
+  function renderSingleLayout(rows, cols) {
+    const seatGrid = document.getElementById('seatGrid');
+    seatGrid.innerHTML = '';
+    allSeats = [];
+    excludedIndexes.clear();
+    let seatIndex = 0;
+    
+    for (let r = 0; r < rows; r++) {
+      const row = document.createElement('div');
+      row.className = 'pair-row';
+      for (let c = 0; c < cols; c++) {
+        const seat = document.createElement('div');
+        seat.className = 'seat';
+        const currentIndex = r * cols + c;  // 0부터 시작하는 인덱스
+        seat.dataset.seatNumber = currentIndex + 1;  // 화면에 표시되는 번호는 1부터
+        seat.textContent = currentIndex + 1;
+        seat.addEventListener('click', () => toggleExclude(seat, currentIndex));
+        allSeats.push(seat);
+        row.appendChild(seat);
+      }
+      seatGrid.appendChild(row);
+    }
+  }
+
+  function renderPairLayout(rows, cols) {
+    const seatGrid = document.getElementById('seatGrid');
+    seatGrid.innerHTML = '';
+    allSeats = [];
+    excludedIndexes.clear();
+    let seatIndex = 0;
+
+    for (let r = 0; r < rows; r++) {
+      const row = document.createElement('div');
+      row.className = 'pair-row';
+
+      for (let c = 0; c < cols; c += 2) {
+        const pair = document.createElement('div');
+        pair.style.display = 'flex';
+        pair.style.gap = '4px';
+
+        for (let i = 0; i < 2; i++) {
+          const seat = document.createElement('div');
+          seat.className = 'seat';
+          const seatNumber = seatIndex + 1;
+          seat.dataset.seatNumber = seatNumber;
+          seat.textContent = seatNumber;
+          seat.addEventListener('click', () => toggleExclude(seat, seatIndex));
+          allSeats.push(seat);
+          seatIndex++;
+          pair.appendChild(seat);
+        }
+
+        row.appendChild(pair);
+      }
+
+      seatGrid.appendChild(row);
+    }
+  }
+
+  function renderGroupLayout(groupSize, totalStudents) {
+    const seatGrid = document.getElementById('seatGrid');
+    seatGrid.innerHTML = '';
+    allSeats = [];
+    excludedIndexes.clear();
+
+    const totalGroups = Math.ceil(totalStudents / groupSize);
+    let seatIndex = 0;
+
+    for (let g = 0; g < totalGroups; g++) {
+      const group = document.createElement('div');
+      group.style.display = 'grid';
+      group.style.gridTemplateColumns = 'repeat(2, 1fr)';
+      group.style.gap = '4px';
+      group.style.border = '1px solid #aaa';
+      group.style.padding = '8px';
+      group.style.borderRadius = '12px';
+      group.style.marginBottom = '1rem';
+
+      const groupLabel = document.createElement('div');
+      groupLabel.textContent = `${g + 1}조`;
+      groupLabel.style.gridColumn = 'span 2';
+      groupLabel.style.textAlign = 'center';
+      groupLabel.style.fontWeight = 'bold';
+      groupLabel.style.marginBottom = '4px';
+      group.appendChild(groupLabel);
+
+      for (let i = 0; i < groupSize; i++) {
+        const seat = document.createElement('div');
+        seat.className = 'seat';
+        const seatNumber = seatIndex + 1;
+        seat.dataset.seatNumber = seatNumber;
+        seat.textContent = seatNumber;
+        seat.addEventListener('click', () => toggleExclude(seat, seatIndex));
+        allSeats.push(seat);
+        seatIndex++;
+        group.appendChild(seat);
+      }
+
+      seatGrid.appendChild(group);
+    }
+  }
+
+  document.getElementById('generateSeats').addEventListener('click', () => {
+    const layoutType = document.getElementById('layoutType').value;
+    const rows = parseInt(document.getElementById('rows').value);
+    const cols = parseInt(document.getElementById('cols').value);
+    const studentCount = parseInt(document.getElementById('studentCount').value);
+    const groupSize = parseInt(document.getElementById('groupSize').value);
+
+    if (layoutType === 'group') {
+      renderGroupLayout(groupSize, studentCount);
+    } else if (layoutType === 'pair') {
+      renderPairLayout(rows, cols);
+    } else {
+      renderSingleLayout(rows, cols);
+    }
+    
+    switchTab('seat');
+  });
+
+ function finalizeAssignment() {
+  const studentCount = parseInt(document.getElementById('studentCount').value);
+  const totalSeats = allSeats.length;
+  const neededExclusions = totalSeats - studentCount;
+  
+  // 제외된 좌석 인덱스를 배열로 변환하여 정확한 수 계산
+  const excludedSeatIndexes = Array.from(excludedIndexes).sort((a, b) => a - b);
+  const currentExcludedCount = excludedSeatIndexes.length;
+
+  if (currentExcludedCount > neededExclusions) {
+    alert(`제외 좌석이 너무 많습니다. 최대 ${neededExclusions}개의 좌석만 제외할 수 있습니다.`);
+    return;
+  } else if (currentExcludedCount < neededExclusions) {
+    alert(`좌석을 더 제외해야 합니다. 아직 ${neededExclusions - currentExcludedCount}개의 좌석을 제외해주세요.`);
+    return;
+  }
+
+  // 1부터 학생 수까지의 번호 배열 생성 (랜덤 섞기)
+  const studentNumbers = Array.from({ length: studentCount }, (_, i) => i + 1)
+    .sort(() => Math.random() - 0.5);
+  
+  let numIndex = 0;
+  allSeats.forEach((seat, idx) => {
+    if (excludedIndexes.has(idx)) {
+      // 제외된 좌석은 빈칸으로
+      seat.textContent = '';
+      seat.classList.add('excluded');
+    } else {
+      // 사용 가능한 좌석에 번호 배정
+      seat.textContent = studentNumbers[numIndex++];
+      seat.classList.remove('excluded');
+    }
+  });
+}
+
+</script>
+</body>
+</html>
